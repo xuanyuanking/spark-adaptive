@@ -383,9 +383,10 @@ case class OptimizeJoin(conf: SQLConf) extends Rule[SparkPlan] {
         if ((numExchanges == 0) ||
           (queryStage.isInstanceOf[ShuffleQueryStage] && numExchanges <= 1)) {
           val broadcastSidePlan = if (broadcastSide.get.equals(BuildLeft)) {
-            removeSort(left).children(0)
+            // TODO RemoveSort(left) may not return a QueryStageInput?
+            removeSort(left).asInstanceOf[QueryStageInput].childStage
           } else {
-            removeSort(right).children(0)
+            removeSort(right).asInstanceOf[QueryStageInput].childStage
           }
           // Not read the partitions which has 0 rows on build side
           val startAndEndIndices = calculatePartitionStartEndIndices(
