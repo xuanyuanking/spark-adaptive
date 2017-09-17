@@ -325,8 +325,8 @@ case class OptimizeJoin(conf: SQLConf) extends Rule[SparkPlan] {
   }
 
   // Change to functional way?
-  private def calculatePartitionStartEndIndices(plan: ShuffleExchange): (Array[Int], Array[Int]) = {
-    val rowStatisticsByPartitionId = SizeInBytesOnlyStatsPlanVisitor.visitShuffleExchange(
+  private def calculatePartitionStartEndIndices(plan: QueryStage): (Array[Int], Array[Int]) = {
+    val rowStatisticsByPartitionId = SizeInBytesOnlyStatsPlanVisitor.visitQueryStage(
       plan).partStatistics.get.rowsByPartitionId
     val partitionStartIndicies = ArrayBuffer[Int]()
     val partitionEndIndicies = ArrayBuffer[Int]()
@@ -383,13 +383,13 @@ case class OptimizeJoin(conf: SQLConf) extends Rule[SparkPlan] {
         if ((numExchanges == 0) ||
           (queryStage.isInstanceOf[ShuffleQueryStage] && numExchanges <= 1)) {
           val broadcastSidePlan = if (broadcastSide.get.equals(BuildLeft)) {
-            removeSort(left)
+            removeSort(left).children(0)
           } else {
-            removeSort(right)
+            removeSort(right).children(0)
           }
           // Not read the partitions which has 0 rows on build side
           val startAndEndIndices = calculatePartitionStartEndIndices(
-            broadcastSidePlan.asInstanceOf[ShuffleExchange])
+            broadcastSidePlan.asInstanceOf[QueryStage])
 
           // Set QueryStageInput to return local shuffled RDD
           broadcastJoin.children.foreach {
