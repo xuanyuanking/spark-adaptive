@@ -100,7 +100,7 @@ case class ShuffleQueryStageInput(
   override def doExecute(): RDD[InternalRow] = {
     val childRDD = childStage.execute().asInstanceOf[ShuffledRowRDD]
     if (isLocalShuffle) {
-      new LocalShuffledRowRDD(childRDD.dependency)
+      new LocalShuffledRowRDD(childRDD.dependency, partitionStartIndices, partitionEndIndices)
     } else if (isAdaptiveShuffle) {
       assert(partitionStartIndices.isDefined && partitionEndIndices.isDefined &&
         partitionEndIndices.get(0) == partitionStartIndices.get(0) + 1)
@@ -334,7 +334,7 @@ case class OptimizeJoin(conf: SQLConf) extends Rule[SparkPlan] {
     var end = 0
     var i = 0
     for (rows <- rowStatisticsByPartitionId) {
-      if (rows == 0) {
+      if (rows != 0) {
         if (!continuousZeroFlag) {
           partitionStartIndicies += i
           continuousZeroFlag = true

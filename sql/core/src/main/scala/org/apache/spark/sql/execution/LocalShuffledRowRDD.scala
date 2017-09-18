@@ -91,17 +91,15 @@ class LocalShuffledRowRDD(
       var i = 0
       var iter = readers(i).read().asInstanceOf[Iterator[Product2[Int, InternalRow]]].map(_._2)
 
-      // If i < readers.length - 1, then this is not the last ShuffleReader, else it depends on if
-      // this shuffle reader has records to read
-      override def hasNext = i < readers.length - 1 || iter.hasNext
-
-      override def next() = {
-        if (!iter.hasNext) {
+      override def hasNext = {
+        while(iter.hasNext == false && i + 1 <= readers.length - 1) {
           i += 1
           iter = readers(i).read().asInstanceOf[Iterator[Product2[Int, InternalRow]]].map(_._2)
         }
-        iter.next()
+        iter.hasNext
       }
+
+      override def next() = iter.next()
     }
   }
 
