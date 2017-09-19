@@ -383,21 +383,23 @@ case class OptimizeJoin(conf: SQLConf) extends Rule[SparkPlan] {
         if ((numExchanges == 0) ||
           (queryStage.isInstanceOf[ShuffleQueryStage] && numExchanges <= 1)) {
           val broadcastSidePlan = if (broadcastSide.get.equals(BuildLeft)) {
-            // TODO RemoveSort(left) may not return a QueryStageInput?
-            removeSort(left).asInstanceOf[QueryStageInput].childStage
+            removeSort(left)
           } else {
-            removeSort(right).asInstanceOf[QueryStageInput].childStage
+            removeSort(right)
           }
-          // Not read the partitions which has 0 rows on build side
-          val startAndEndIndices = calculatePartitionStartEndIndices(
-            broadcastSidePlan.asInstanceOf[QueryStage])
-
           // Set QueryStageInput to return local shuffled RDD
           broadcastJoin.children.foreach {
             case input: ShuffleQueryStageInput =>
               input.isLocalShuffle = true
-              input.partitionStartIndices = Some(startAndEndIndices._1)
-              input.partitionEndIndices = Some(startAndEndIndices._2)
+              // Only apply this optimization when there's a shuffle write on braodcast side
+              if (broadcastSidePlan.isInstanceOf[QueryStageInput]) {
+                // Not read the partitions which has 0 rows on build side
+                val startAndEndIndices = calculatePartitionStartEndIndices(
+                  broadcastSidePlan.asInstanceOf[QueryStageInput].childStage
+                )
+                input.partitionStartIndices = Some(startAndEndIndices._1)
+                input.partitionEndIndices = Some(startAndEndIndices._2)
+              }
             case _ =>
           }
           // Update the plan in queryStage
