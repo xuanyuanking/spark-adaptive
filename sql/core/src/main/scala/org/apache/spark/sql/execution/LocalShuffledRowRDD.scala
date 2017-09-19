@@ -92,7 +92,7 @@ class LocalShuffledRowRDD(
       var iter = readers(i).read().asInstanceOf[Iterator[Product2[Int, InternalRow]]].map(_._2)
 
       override def hasNext = {
-        while(iter.hasNext == false && i + 1 <= readers.length - 1) {
+        while (iter.hasNext == false && i + 1 <= readers.length - 1) {
           i += 1
           iter = readers(i).read().asInstanceOf[Iterator[Product2[Int, InternalRow]]].map(_._2)
         }
