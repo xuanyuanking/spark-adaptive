@@ -23,14 +23,12 @@ import org.apache.spark.sql.catalyst.InternalRow
 
 /**
  * The [[Partition]] used by [[AdaptiveShuffledRowRDD]]. A post-shuffle partition
- * (identified by `postShufflePartitionIndex`) contains multiple ranges of pre-shuffle partitions.
- * Each range is from `startPreShufflePartitionIndices[i]` to `endPreShufflePartitionIndices[i]`
- * - 1, inclusive. The partitions are from `startMapId` to `endMapId` - 1, inclusive.
+ * (identified by `postShufflePartitionIndex`) contains a range of pre-shuffle partitions
+ * (`preShufflePartitionIndex` from `startMapId` to `endMapId - 1`, inclusive).
  */
 private final class AdaptiveShuffledRowRDDPartition(
     val postShufflePartitionIndex: Int,
-    val startPreShufflePartitionIndices: Array[Int],
-    val endPreShufflePartitionIndices: Array[Int],
+    val preShufflePartitionIndex: Int,
     val startMapId: Int,
     val endMapId: Int) extends Partition {
   override val index: Int = postShufflePartitionIndex
@@ -70,8 +68,7 @@ class AdaptiveShuffledRowRDD(
         } else {
           numPostShufflePartitions
         }
-      new AdaptiveShuffledRowRDDPartition(
-        i, Array(partitionIndex), Array(partitionIndex + 1), startIndex, endIndex)
+      new AdaptiveShuffledRowRDDPartition(i, partitionIndex, startIndex, endIndex)
     }
   }
 
@@ -85,8 +82,7 @@ class AdaptiveShuffledRowRDD(
 
   override def compute(split: Partition, context: TaskContext): Iterator[InternalRow] = {
     val shuffledRowPartition = split.asInstanceOf[AdaptiveShuffledRowRDDPartition]
-    assert(shuffledRowPartition.startPreShufflePartitionIndices.length == 1)
-    val index = shuffledRowPartition.startPreShufflePartitionIndices(0)
+    val index = shuffledRowPartition.preShufflePartitionIndex
     val reader = SparkEnv.get.shuffleManager.getReader(
       dependency.shuffleHandle,
       index,

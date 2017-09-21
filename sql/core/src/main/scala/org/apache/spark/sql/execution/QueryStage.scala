@@ -326,8 +326,7 @@ case class OptimizeJoin(conf: SQLConf) extends Rule[SparkPlan] {
 
   // Change to functional way?
   private def calculatePartitionStartEndIndices(plan: QueryStage): (Array[Int], Array[Int]) = {
-    val rowStatisticsByPartitionId = SizeInBytesOnlyStatsPlanVisitor.visitQueryStage(
-      plan).partStatistics.get.rowsByPartitionId
+    val rowStatisticsByPartitionId = plan.stats.partStatistics.get.rowsByPartitionId
     val partitionStartIndicies = ArrayBuffer[Int]()
     val partitionEndIndicies = ArrayBuffer[Int]()
     var continuousZeroFlag = false
@@ -351,6 +350,26 @@ case class OptimizeJoin(conf: SQLConf) extends Rule[SparkPlan] {
       partitionEndIndicies += i
     }
     (partitionStartIndicies.toArray, partitionEndIndicies.toArray)
+  }
+
+  // After transforming to BroadcastJoin from SortMergeJoin, local shuffle read should be used and
+  // there's opportunity to read less partitions based on previous shuffle write results
+  private def optimizeForLocalShuffleReadLessPartitions(
+    broadcastSidePlan: SparkPlan, anotherPlan: SparkPlan) = {
+    broadcastSidePlan match {
+      case input: ShuffleQueryStageInput =>
+        input.isLocalShuffle = true
+        // Only apply this optimization when there's a shuffle write on braodcast side
+        if (broadcastSidePlan.isInstanceOf[QueryStageInput]) {
+          // Not read the partitions which has 0 rows on build side
+          val startAndEndIndices = calculatePartitionStartEndIndices(
+            broadcastSidePlan.asInstanceOf[QueryStageInput].childStage
+          )
+          input.partitionStartIndices = Some(startAndEndIndices._1)
+          input.partitionEndIndices = Some(startAndEndIndices._2)
+        }
+      case _ =>
+    }
   }
 
   private def optimizeSortMergeJoin(
@@ -382,26 +401,14 @@ case class OptimizeJoin(conf: SQLConf) extends Rule[SparkPlan] {
 
         if ((numExchanges == 0) ||
           (queryStage.isInstanceOf[ShuffleQueryStage] && numExchanges <= 1)) {
-          val broadcastSidePlan = if (broadcastSide.get.equals(BuildLeft)) {
-            removeSort(left)
-          } else {
-            removeSort(right)
+          val (leftRemovedPlan, rightRemovedPlan) = (removeSort(left), removeSort(right))
+          val (broadcastSidePlan, anotherPlan) = buildSide match {
+            case BuildLeft => (leftRemovedPlan, rightRemovedPlan)
+            case BuildRight => (rightRemovedPlan, leftRemovedPlan)
           }
-          // Set QueryStageInput to return local shuffled RDD
-          broadcastJoin.children.foreach {
-            case input: ShuffleQueryStageInput =>
-              input.isLocalShuffle = true
-              // Only apply this optimization when there's a shuffle write on braodcast side
-              if (broadcastSidePlan.isInstanceOf[QueryStageInput]) {
-                // Not read the partitions which has 0 rows on build side
-                val startAndEndIndices = calculatePartitionStartEndIndices(
-                  broadcastSidePlan.asInstanceOf[QueryStageInput].childStage
-                )
-                input.partitionStartIndices = Some(startAndEndIndices._1)
-                input.partitionEndIndices = Some(startAndEndIndices._2)
-              }
-            case _ =>
-          }
+
+          optimizeForLocalShuffleReadLessPartitions(broadcastSidePlan, anotherPlan)
+
           // Update the plan in queryStage
           queryStage.child = newChild
           broadcastJoin

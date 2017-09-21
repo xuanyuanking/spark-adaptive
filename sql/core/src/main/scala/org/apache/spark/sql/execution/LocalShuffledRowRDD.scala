@@ -63,7 +63,7 @@ class LocalShuffledRowRDD(
   override def getPartitions: Array[Partition] = {
     assert(partitionStartIndices.length == partitionEndIndices.length)
     Array.tabulate[Partition](numPostShufflePartitions) { i =>
-      new AdaptiveShuffledRowRDDPartition(i, partitionStartIndices, partitionEndIndices, i, i + 1)
+      new ShuffledRDDPartition(i)
     }
   }
 
@@ -74,15 +74,15 @@ class LocalShuffledRowRDD(
   }
 
   override def compute(split: Partition, context: TaskContext): Iterator[InternalRow] = {
-    val shuffledRowPartition = split.asInstanceOf[AdaptiveShuffledRowRDDPartition]
+    val shuffledRowPartition = split.asInstanceOf[ShuffledRDDPartition]
     val mapId = shuffledRowPartition.index
     // Connect the the InternalRows read by each ShuffleReader
     new Iterator[InternalRow] {
-      val readers = partitionStartIndices.zip(partitionEndIndices).map{ startAndEnd =>
+      val readers = partitionStartIndices.zip(partitionEndIndices).map { case (start, end) =>
         SparkEnv.get.shuffleManager.getReader(
           dependency.shuffleHandle,
-          startAndEnd._1,
-          startAndEnd._2,
+          start,
+          end,
           context,
           mapId,
           mapId + 1)
