@@ -405,10 +405,9 @@ case class OptimizeJoin(conf: SQLConf) extends Rule[SparkPlan] {
 
         if ((numExchanges == 0) ||
           (queryStage.isInstanceOf[ShuffleQueryStage] && numExchanges <= 1)) {
-          val (leftRemovedPlan, rightRemovedPlan) = (removeSort(left), removeSort(right))
           val (broadcastSidePlan, anotherPlan) = buildSide match {
-            case BuildLeft => (leftRemovedPlan, rightRemovedPlan)
-            case BuildRight => (rightRemovedPlan, leftRemovedPlan)
+            case BuildLeft => (removeSort(left), removeSort(right))
+            case BuildRight => (removeSort(right), removeSort(left))
           }
 
           optimizeForLocalShuffleReadLessPartitions(broadcastSidePlan, anotherPlan)
