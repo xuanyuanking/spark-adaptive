@@ -255,6 +255,13 @@ abstract class QueryStage extends UnaryExecNode {
       addSuffix: Boolean = false): StringBuilder = {
     child.generateTreeString(depth, lastChildren, builder, verbose, "*")
   }
+
+  override def executeCollect(): Array[InternalRow] =
+    if (child.isInstanceOf[WholeStageCodegenExec]) {
+      child.execute().collect()
+    } else {
+      child.executeCollect()
+    }
 }
 
 object QueryStage {
