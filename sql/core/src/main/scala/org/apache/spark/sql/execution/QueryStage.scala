@@ -324,9 +324,9 @@ case class OptimizeJoin(conf: SQLConf) extends Rule[SparkPlan] {
     }
   }
 
-  // Change to functional way?
-  private def calculatePartitionStartEndIndices(plan: QueryStage): (Array[Int], Array[Int]) = {
-    val rowStatisticsByPartitionId = plan.stats.partStatistics.get.rowsByPartitionId
+    // Change to functional way?
+  private[execution] def calculatePartitionStartEndIndices(rowStatisticsByPartitionId: Array[Long]):
+    (Array[Int], Array[Int]) = {
     val partitionStartIndicies = ArrayBuffer[Int]()
     val partitionEndIndicies = ArrayBuffer[Int]()
     var continuousZeroFlag = false
@@ -349,7 +349,11 @@ case class OptimizeJoin(conf: SQLConf) extends Rule[SparkPlan] {
     if (continuousZeroFlag) {
       partitionEndIndicies += i
     }
-    (partitionStartIndicies.toArray, partitionEndIndicies.toArray)
+    if (partitionStartIndicies.length == 0) {
+      (Array(0), Array(0))
+    } else {
+      (partitionStartIndicies.toArray, partitionEndIndicies.toArray)
+    }
   }
 
   // After transforming to BroadcastJoin from SortMergeJoin, local shuffle read should be used and
@@ -362,8 +366,8 @@ case class OptimizeJoin(conf: SQLConf) extends Rule[SparkPlan] {
         // Only apply this optimization when there's a shuffle write on braodcast side
         if (broadcastSidePlan.isInstanceOf[QueryStageInput]) {
           // Not read the partitions which has 0 rows on build side
-          val startAndEndIndices = calculatePartitionStartEndIndices(
-            broadcastSidePlan.asInstanceOf[QueryStageInput].childStage
+          val startAndEndIndices = calculatePartitionStartEndIndices(broadcastSidePlan
+            .asInstanceOf[QueryStageInput].childStage.stats.partStatistics.get.rowsByPartitionId
           )
           input.partitionStartIndices = Some(startAndEndIndices._1)
           input.partitionEndIndices = Some(startAndEndIndices._2)
