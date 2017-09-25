@@ -184,7 +184,7 @@ abstract class QueryStage extends UnaryExecNode {
 
   private var cachedRDD: RDD[InternalRow] = null
 
-  override def doExecute(): RDD[InternalRow] = synchronized {
+  def doPreExecutionOptimization(): Unit = synchronized {
     if (cachedRDD == null) {
       // 1. Execute childStages and optimize the plan in this stage
       executeChildStages()
@@ -225,7 +225,7 @@ abstract class QueryStage extends UnaryExecNode {
         } else {
           val partitionStartIndices =
             exchangeCoordinator.estimatePartitionStartIndices(childMapOutputStatistics)
-        queryStageInputs.foreach(_.partitionStartIndices = Some(partitionStartIndices))
+          queryStageInputs.foreach(_.partitionStartIndices = Some(partitionStartIndices))
         }
       }
 
@@ -239,11 +239,21 @@ abstract class QueryStage extends UnaryExecNode {
           queryExecution.toString,
           SparkPlanInfo.fromSparkPlan(queryExecution.executedPlan)))
       }
+    }
+  }
 
-      // 4. Execute the plan in this stage
+  override def doExecute(): RDD[InternalRow] = {
+    doPreExecutionOptimization()
+    // 4. Execute the plan in this stage
+    synchronized {
       cachedRDD = executeStage()
     }
     cachedRDD
+  }
+
+  override def executeCollect(): Array[InternalRow] = {
+    doPreExecutionOptimization()
+    child.executeCollect()
   }
 
   override def generateTreeString(
@@ -255,13 +265,6 @@ abstract class QueryStage extends UnaryExecNode {
       addSuffix: Boolean = false): StringBuilder = {
     child.generateTreeString(depth, lastChildren, builder, verbose, "*")
   }
-
-  override def executeCollect(): Array[InternalRow] =
-    if (child.isInstanceOf[WholeStageCodegenExec]) {
-      child.execute().collect()
-    } else {
-      child.executeCollect()
-    }
 }
 
 object QueryStage {
