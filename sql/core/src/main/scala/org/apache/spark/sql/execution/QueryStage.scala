@@ -183,77 +183,78 @@ abstract class QueryStage extends UnaryExecNode {
   def executeStage(): RDD[InternalRow] = child.execute()
 
   private var cachedRDD: RDD[InternalRow] = null
+  private var cachedArray: Array[InternalRow] = null
 
-  def doPreExecutionOptimization(): Unit = synchronized {
-    if (cachedRDD == null) {
-      // 1. Execute childStages and optimize the plan in this stage
-      executeChildStages()
+  def doPreExecutionOptimization(): Unit = {
+    // 1. Execute childStages and optimize the plan in this stage
+    executeChildStages()
 
-      // Optimize join in this stage based on previous stages' statistics.
-      val oldChild = child
-      OptimizeJoin(conf).apply(this)
-      HandleSkewedJoin(conf).apply(this)
-      // If the Joins are changed, we need apply EnsureRequirements rule to add BroadcastExchange.
-      if (!oldChild.fastEquals(child)) {
-        child = EnsureRequirements(conf).apply(child)
-      }
+    // Optimize join in this stage based on previous stages' statistics.
+    val oldChild = child
+    OptimizeJoin(conf).apply(this)
+    HandleSkewedJoin(conf).apply(this)
+    // If the Joins are changed, we need apply EnsureRequirements rule to add BroadcastExchange.
+    if (!oldChild.fastEquals(child)) {
+      child = EnsureRequirements(conf).apply(child)
+    }
 
-      // 2. Determine reducer number
-      val queryStageInputs: Seq[ShuffleQueryStageInput] = child.collect {
-        case input: ShuffleQueryStageInput if (!input.partitionStartIndices.isDefined) => input
-      }
-      val childMapOutputStatistics = queryStageInputs.map(_.childStage.mapOutputStatistics)
-        .filter(_ != null).toArray
-      if (childMapOutputStatistics.length > 0) {
-        val minNumPostShufflePartitions =
-          if (conf.minNumPostShufflePartitions > 0) Some(conf.minNumPostShufflePartitions) else None
+    // 2. Determine reducer number
+    val queryStageInputs: Seq[ShuffleQueryStageInput] = child.collect {
+      case input: ShuffleQueryStageInput if (!input.partitionStartIndices.isDefined) => input
+    }
+    val childMapOutputStatistics = queryStageInputs.map(_.childStage.mapOutputStatistics)
+      .filter(_ != null).toArray
+    if (childMapOutputStatistics.length > 0) {
+      val minNumPostShufflePartitions =
+        if (conf.minNumPostShufflePartitions > 0) Some(conf.minNumPostShufflePartitions) else None
 
-        val exchangeCoordinator = new ExchangeCoordinator(
-          conf.targetPostShuffleInputSize,
-          minNumPostShufflePartitions)
+      val exchangeCoordinator = new ExchangeCoordinator(
+        conf.targetPostShuffleInputSize,
+        minNumPostShufflePartitions)
 
-        if (queryStageInputs.length == 2 && queryStageInputs.forall(_.skewedPartitions.isDefined)) {
-          // If a skewed join is detected and optimized, we will omit the skewed partitions when
-          // estimate the partition start and end indices.
-          val (partitionStartIndices, partitionEndIndices) =
-            exchangeCoordinator.estimatePartitionStartEndIndices(
-              childMapOutputStatistics, queryStageInputs(0).skewedPartitions.get)
-          queryStageInputs.foreach { i =>
-            i.partitionStartIndices = Some(partitionStartIndices)
-            i.partitionEndIndices = Some(partitionEndIndices)
-          }
-        } else {
-          val partitionStartIndices =
-            exchangeCoordinator.estimatePartitionStartIndices(childMapOutputStatistics)
-          queryStageInputs.foreach(_.partitionStartIndices = Some(partitionStartIndices))
+      if (queryStageInputs.length == 2 && queryStageInputs.forall(_.skewedPartitions.isDefined)) {
+        // If a skewed join is detected and optimized, we will omit the skewed partitions when
+        // estimate the partition start and end indices.
+        val (partitionStartIndices, partitionEndIndices) =
+          exchangeCoordinator.estimatePartitionStartEndIndices(
+            childMapOutputStatistics, queryStageInputs(0).skewedPartitions.get)
+        queryStageInputs.foreach { i =>
+          i.partitionStartIndices = Some(partitionStartIndices)
+          i.partitionEndIndices = Some(partitionEndIndices)
         }
+      } else {
+        val partitionStartIndices =
+          exchangeCoordinator.estimatePartitionStartIndices(childMapOutputStatistics)
+        queryStageInputs.foreach(_.partitionStartIndices = Some(partitionStartIndices))
       }
+    }
 
-      // 3. Codegen and update the UI
-      child = CollapseCodegenStages(sqlContext.conf).apply(child)
-      val executionId = sqlContext.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
-      if (executionId != null && executionId.nonEmpty) {
-        val queryExecution = SQLExecution.getQueryExecution(executionId.toLong)
-        sparkContext.listenerBus.post(SparkListenerSQLAdaptiveExecutionUpdate(
-          executionId.toLong,
-          queryExecution.toString,
-          SparkPlanInfo.fromSparkPlan(queryExecution.executedPlan)))
-      }
+    // 3. Codegen and update the UI
+    child = CollapseCodegenStages(sqlContext.conf).apply(child)
+    val executionId = sqlContext.sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
+    if (executionId != null && executionId.nonEmpty) {
+      val queryExecution = SQLExecution.getQueryExecution(executionId.toLong)
+      sparkContext.listenerBus.post(SparkListenerSQLAdaptiveExecutionUpdate(
+        executionId.toLong,
+        queryExecution.toString,
+        SparkPlanInfo.fromSparkPlan(queryExecution.executedPlan)))
     }
   }
 
-  override def doExecute(): RDD[InternalRow] = {
-    doPreExecutionOptimization()
-    // 4. Execute the plan in this stage
-    synchronized {
+  override def doExecute(): RDD[InternalRow] = synchronized {
+    if (cachedRDD == null) {
+      doPreExecutionOptimization()
       cachedRDD = executeStage()
     }
     cachedRDD
   }
 
-  override def executeCollect(): Array[InternalRow] = {
-    doPreExecutionOptimization()
-    child.executeCollect()
+  override def executeCollect(): Array[InternalRow] = synchronized {
+    if (cachedArray == null) {
+      doPreExecutionOptimization()
+      cachedArray = child.executeCollect()
+    }
+    cachedArray
   }
 
   override def generateTreeString(
