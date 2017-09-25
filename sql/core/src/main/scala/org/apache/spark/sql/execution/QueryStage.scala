@@ -182,8 +182,8 @@ abstract class QueryStage extends UnaryExecNode {
 
   def executeStage(): RDD[InternalRow] = child.execute()
 
-  private var cachedRDD: RDD[InternalRow] = null
-  private var cachedArray: Array[InternalRow] = null
+  private var cachedRDD: Option[RDD[InternalRow]] = None
+  private var cachedArray: Option[Array[InternalRow]] = None
 
   def doPreExecutionOptimization(): Unit = {
     // 1. Execute childStages and optimize the plan in this stage
@@ -242,19 +242,23 @@ abstract class QueryStage extends UnaryExecNode {
   }
 
   override def doExecute(): RDD[InternalRow] = synchronized {
-    if (cachedRDD == null) {
-      doPreExecutionOptimization()
-      cachedRDD = executeStage()
+    cachedRDD match {
+      case None =>
+        doPreExecutionOptimization()
+        cachedRDD = Some(executeStage())
+      case Some(cached) =>
     }
-    cachedRDD
+    cachedRDD.get
   }
 
   override def executeCollect(): Array[InternalRow] = synchronized {
-    if (cachedArray == null) {
-      doPreExecutionOptimization()
-      cachedArray = child.executeCollect()
+    cachedArray match {
+      case None =>
+        doPreExecutionOptimization()
+        cachedArray = Some(child.executeCollect())
+      case Some(cached) =>
     }
-    cachedArray
+    cachedArray.get
   }
 
   override def generateTreeString(
