@@ -196,7 +196,6 @@ private[spark] class IndexShuffleBlockResolver(
   override def getBlockData(blockId: ShuffleBlockId): ManagedBuffer = {
     // The block is actually going to be a range of a single map output file for this map, so
     // find out the consolidated file, then the offset within that from our index
-    logDebug(s"Fetch block data for $blockId")
     val indexFile = getIndexFile(blockId.shuffleId, blockId.mapId)
 
     val in = new DataInputStream(Files.newInputStream(indexFile.toPath))
