@@ -129,28 +129,34 @@ case class OptimizeJoin(conf: SQLConf) extends Rule[SparkPlan] {
           val newChild = queryStage.child.transformDown {
             case s: SortMergeJoinExec if (s.fastEquals(smj)) => broadcastJoin
           }
-          // Apply EnsureRequirement rule to check if any new Exchange will be added. If no
-          // Exchange is added, we convert the sortMergeJoin to BroadcastHashJoin. Otherwise
-          // we don't convert it because it causes additional Shuffle.
+
+          val broadcastSidePlan = buildSide match {
+            case BuildLeft => (removeSort(left))
+            case BuildRight => (removeSort(right))
+          }
+          // Local shuffle read less partitions based on broadcastSide's row statistics
+          optimizeForLocalShuffleReadLessPartitions(broadcastSidePlan, broadcastJoin.children)
+
+          // Apply EnsureRequirement rule to check if any new Exchange will be added. If the added
+          // Exchange number less than 1(maybe will give a parameter), we convert the
+          // sortMergeJoin to BroadcastHashJoin. Otherwise we don't convert it because it causes
+          // additional Shuffle.
           val afterEnsureRequirements = EnsureRequirements(conf).apply(newChild)
           val numExchanges = afterEnsureRequirements.collect {
             case e: ShuffleExchange => e
           }.length
 
+          val maxAdditanlShuffleNum = conf.adaptiveMaxAdditinalShuffleNum
           if ((numExchanges == 0) ||
-            (queryStage.isInstanceOf[ShuffleQueryStage] && numExchanges <= 1)) {
-            val broadcastSidePlan = buildSide match {
-              case BuildLeft => (removeSort(left))
-              case BuildRight => (removeSort(right))
-            }
-
-            // Local shuffle read less partitions based on broadcastSide's row statistics
-            optimizeForLocalShuffleReadLessPartitions(broadcastSidePlan, broadcastJoin.children)
-
+            (queryStage.isInstanceOf[ShuffleQueryStage] &&
+              numExchanges <= maxAdditanlShuffleNum + 1)) {
             // Update the plan in queryStage
             queryStage.child = newChild
             broadcastJoin
           } else {
+            logWarning("Join optimization revert, this is because the added exchange larger" +
+              s"than ${maxAdditanlShuffleNum + 1}. You can control this by modifying" +
+              s" spark.sql.adaptive.maxAdditionalShuffleNum")
             smj
           }
         }.getOrElse(smj)
