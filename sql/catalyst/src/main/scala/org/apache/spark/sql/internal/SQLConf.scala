@@ -266,9 +266,9 @@ object SQLConf {
 
   val ADAPTIVE_EXECUTION_MAX_ADDITIONAL_SHUFFLE_NUM =
     buildConf("spark.sql.adaptive.maxAdditionalShuffleNum")
-      .doc("The maximum number allowed during OptimizeJoin in adaptive execution." +
-        "We keep the default number to 0 but in some cases like SortMergeJoin can" +
-        "cast to BroadCastJoin, this config can control the optimization.")
+      .doc("The maximum number of additional shuffle allowed during OptimizeJoin in adaptive" +
+        " execution. We keep the default number to 0 but in some cases like SortMergeJoin can" +
+        " cast to BroadCastJoin, this config can control the optimization.")
       .intConf
       .createWithDefault(0)
 
@@ -1055,7 +1055,7 @@ class SQLConf extends Serializable with Logging {
   def minNumPostShufflePartitions: Int =
     getConf(SHUFFLE_MIN_NUM_POSTSHUFFLE_PARTITIONS)
 
-  def adaptiveMaxAdditinalShuffleNum: Int =
+  def adaptiveMaxAdditionalShuffleNum: Int =
     getConf(ADAPTIVE_EXECUTION_MAX_ADDITIONAL_SHUFFLE_NUM)
 
   def minBatchesToRetain: Int = getConf(MIN_BATCHES_TO_RETAIN)
