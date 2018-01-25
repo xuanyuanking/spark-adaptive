@@ -104,6 +104,29 @@ case class OptimizeJoin(conf: SQLConf) extends Rule[SparkPlan] {
     }
   }
 
+  // While the changes in optimizeForLocalShuffleReadLessPartitions has additional exchanges,
+  // we need to revert this changes.
+  private def revertShuffleReadChanges(
+      broadcastSidePlan: SparkPlan,
+      childrenPlans: Seq[SparkPlan]) = {
+    childrenPlans.foreach {
+      case input: ShuffleQueryStageInput =>
+        input.isLocalShuffle = false
+      case _ =>
+    }
+    broadcastSidePlan match {
+      case broadcast: ShuffleQueryStageInput
+        if broadcast.childStage.stats.bytesByPartitionId.isDefined =>
+        childrenPlans.foreach {
+          case input: ShuffleQueryStageInput =>
+            input.partitionStartIndices = None
+            input.partitionEndIndices = None
+          case _ =>
+        }
+      case _ =>
+    }
+  }
+
   private def optimizeSortMergeJoin(
       smj: SortMergeJoinExec,
       queryStage: QueryStage): SparkPlan = {
@@ -156,6 +179,7 @@ case class OptimizeJoin(conf: SQLConf) extends Rule[SparkPlan] {
           } else {
             logWarning("Join optimization not applied due to the number of added exchanges" +
               " introduced is larger than spark.sql.adaptive.maxAdditionalShuffleNum")
+            revertShuffleReadChanges(broadcastSidePlan, broadcastJoin.children)
             smj
           }
         }.getOrElse(smj)
